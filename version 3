@@ -1,0 +1,174 @@
+import os
+import pandas as pd
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+from tkinter import Tk
+import pyperclip  # You’ll need to install pyperclip
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import base64
+import time
+import json
+
+# Define paths
+BASE_DIR = "C:\\Encryption-By-Gayantha"
+DATA_DIR = os.path.join(BASE_DIR, "Data")
+
+# Ensure required directory exists
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Qatar flag colors
+MAROON = "#9E1B32"  # Maroon
+WHITE = "#FFFFFF"   # White
+BLACK = "#000000"   # Black (used for contrast)
+GREY = "#D3D3D3"    # Light Grey
+
+# Encryption functions
+def create_unique_key(master_key: str):
+    # Derive unique key using PBKDF2 from the Master Key
+    salt = b"UniqueSalt"  # Salt should be a fixed, secure value
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
+    return kdf.derive(master_key.encode())
+
+def encrypt_data(data: str, master_key: str, unique_key: bytes):
+    # Concatenate master key and unique key, then hash to ensure the final key is 32 bytes long
+    key = (master_key.encode() + unique_key)[:32]  # Truncate to 32 bytes
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
+    encryptor = cipher.encryptor()
+    ciphertext = encryptor.update(data.encode()) + encryptor.finalize()
+    return base64.b64encode(iv + ciphertext).decode()
+
+def decrypt_data(data: str, master_key: str, unique_key: bytes):
+    # Concatenate master key and unique key, then hash to ensure the final key is 32 bytes long
+    key = (master_key.encode() + unique_key)[:32]  # Truncate to 32 bytes
+    encrypted_data = base64.b64decode(data)
+    iv = encrypted_data[:16]
+    ciphertext = encrypted_data[16:]
+    cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
+    decryptor = cipher.decryptor()
+    decrypted_data = decryptor.update(ciphertext) + decryptor.finalize()
+    return decrypted_data.decode()
+
+# Create the main application window
+class CredentialManager:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Encryption-By-Gayantha")
+        self.master_key = None
+        self.unique_key = None
+        self.data = pd.DataFrame(columns=["Entry#", "Date", "Device", "Owner", "Username", "Password", "Purpose"])
+
+        self.load_or_request_master_key()
+        self.load_encrypted_data()
+
+        self.create_gui()
+
+    def load_or_request_master_key(self):
+        # Ask for the Master Key every time with masked input
+        self.master_key = simpledialog.askstring("Master Key", "Enter your Master Key:", show="*")
+        if not self.master_key:
+            messagebox.showerror("Error", "Master Key is required!")
+            self.root.quit()
+            return
+
+        # Derive the Unique Key using the Master Key
+        self.unique_key = create_unique_key(self.master_key)
+
+    def load_encrypted_data(self):
+        # Check if there's any previously saved encrypted data
+        data_path = os.path.join(DATA_DIR, "encrypted_data.txt")
+        if os.path.exists(data_path):
+            with open(data_path, "r") as f:
+                encrypted_lines = f.readlines()
+                decrypted_data = []
+                for line in encrypted_lines:
+                    decrypted_data.append(json.loads(decrypt_data(line.strip(), self.master_key, self.unique_key)))
+                self.data = pd.DataFrame(decrypted_data)
+
+    def create_gui(self):
+        # Set the window background color
+        self.root.configure(bg=MAROON)
+
+        self.table = tk.Listbox(self.root, height=15, width=80, selectmode=tk.SINGLE, bg=GREY, fg=WHITE, font=("Arial", 10))
+        self.table.pack(pady=10)
+        self.refresh_table()
+
+        # Create buttons with Qatar's flag theme colors
+        self.add_button = tk.Button(self.root, text="Add Entry", command=self.add_entry, bg=MAROON, fg=WHITE, font=("Arial", 10))
+        self.add_button.pack(side=tk.LEFT, padx=10)
+
+        self.copy_button = tk.Button(self.root, text="Copy Entry", command=self.copy_entry, bg=MAROON, fg=WHITE, font=("Arial", 10))
+        self.copy_button.pack(side=tk.LEFT, padx=10)
+
+        self.disclaimer_button = tk.Button(self.root, text="Disclaimer", command=self.show_disclaimer, bg=MAROON, fg=WHITE, font=("Arial", 10))
+        self.disclaimer_button.pack(side=tk.LEFT, padx=10)
+
+        self.exit_button = tk.Button(self.root, text="Exit", command=self.exit_program, bg=MAROON, fg=WHITE, font=("Arial", 10))
+        self.exit_button.pack(side=tk.RIGHT, padx=10)
+
+    def refresh_table(self):
+        self.table.delete(0, tk.END)
+        for index, row in self.data.iterrows():
+            entry = f"{row['Entry#']} | {row['Date']} | {row['Device']} | {row['Owner']} | {row['Username']} | {row['Password']} | {row['Purpose']}"
+            self.table.insert(tk.END, entry)
+
+    def add_entry(self):
+        device = simpledialog.askstring("Device", "Enter Device Name:")
+        owner = simpledialog.askstring("Owner", "Enter Owner Name:")
+        username = simpledialog.askstring("Username", "Enter Username:")
+        password = simpledialog.askstring("Password", "Enter Password:")
+        purpose = simpledialog.askstring("Purpose", "Enter Purpose:")
+
+        entry_number = len(self.data) + 1
+        entry_date = time.strftime("%Y-%m-%d %H:%M:%S")
+        new_entry = {
+            "Entry#": entry_number,
+            "Date": entry_date,
+            "Device": device,
+            "Owner": owner,
+            "Username": username,
+            "Password": password,
+            "Purpose": purpose
+        }
+        self.data = pd.concat([self.data, pd.DataFrame([new_entry])], ignore_index=True)
+        self.refresh_table()
+
+    def copy_entry(self):
+        selected_index = self.table.curselection()
+        if selected_index:
+            selected_row = self.data.iloc[selected_index[0]]
+            entry_str = f"Entry# {selected_row['Entry#']} | Date: {selected_row['Date']} | Device: {selected_row['Device']} | Owner: {selected_row['Owner']} | Username: {selected_row['Username']} | Password: {selected_row['Password']} | Purpose: {selected_row['Purpose']}"
+            pyperclip.copy(entry_str)
+            messagebox.showinfo("Success", "Entry copied to clipboard!")
+        else:
+            messagebox.showerror("Error", "No entry selected!")
+
+    def show_disclaimer(self):
+        disclaimer_message = (
+            "This program is created and maintained by Gayantha Bhagya Wijeyawardena.\n\n"
+            "This program should not be redistributed without my consent. Please note that the data cannot be recovered without the Master Key, "
+            "and I will not be responsible for any loss of data.\n\n"
+            "Developer Contact: GayanthaBhagya@gmail.com"
+        )
+        messagebox.showinfo("Disclaimer", disclaimer_message)
+
+    def exit_program(self):
+        encrypted_data = [
+            encrypt_data(json.dumps(row.to_dict()), self.master_key, self.unique_key) 
+            for _, row in self.data.iterrows()
+        ]
+        data_path = os.path.join(DATA_DIR, "encrypted_data.txt")
+        with open(data_path, "w") as f:
+            for line in encrypted_data:
+                f.write(line + "\n")
+        self.root.quit()
+
+def main():
+    root = tk.Tk()
+    app = CredentialManager(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
